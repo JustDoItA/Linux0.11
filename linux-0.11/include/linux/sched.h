@@ -111,27 +111,48 @@ struct task_struct {
  * your own risk!. Base=0, limit=0x9ffff (=640kB)
  */
 #define INIT_TASK \
-/* state etc */	{ 0,15,15, \
-/* signals */	0,{{},},0, \
-/* ec,brk... */	0,0,0,0,0,0, \
-/* pid etc.. */	0,-1,0,0,0, \
-/* uid etc */	0,0,0,0,0,0, \
-/* alarm */	0,0,0,0,0,0, \
-/* math */	0, \
-/* fs info */	-1,0022,NULL,NULL,NULL,0, \
-/* filp */	{NULL,}, \
+/* state etc */	{ 0,--state
+				 15,--counter
+				 15, \--priority
+/* signals */	0,--signal
+				{{},}, 
+		--struct sigaction {
+			void (*sa_handler)(int);
+			sigset_t sa_mask;
+			int sa_flags;
+			void (*sa_restorer)(void);
+	      };
+				0, \--blocked
+/* ec,brk... */	0,0,0,0,0,0, \ --int exit_code; unsigned long start_code,end_code,end_data,brk,start_stack; struct m_inode * root; 
+/* pid etc.. */	0,-1,0,0,0, \ --long pid,father,pgrp,session,leader;
+/* uid etc */	0,0,0,0,0,0, \ --unsigned short uid,euid,suid; unsigned short gid,egid,sgid;
+/* alarm */	0,0,0,0,0,0, \ --long alarm; long utime,stime,cutime,cstime,start_time;
+/* math */	0, \ --unsigned short used_math;
+/* fs info */	-1,0022,NULL,NULL,NULL,0, \ --int tty; unsigned short umask; struct m_inode * pwd; struct m_inode * root; struct m_inode * executable; unsigned long close_on_exec;
+/* filp */	{NULL,}, \ struct file * filp[NR_OPEN];
+ //struct desc_struct ldt[3];
 	{ \
 		{0,0}, \
 /* ldt */	{0x9f,0xc0fa00}, \
 		{0x9f,0xc0f200}, \
 	}, \
-/*tss*/	{0,PAGE_SIZE+(long)&init_task,0x10,0,0,0,0,(long)&pg_dir,\
-	 0,0,0,0,0,0,0,0, \
-	 0,0,0x17,0x17,0x17,0x17,0x17,0x17, \
-	 _LDT(0),0x80000000, \
-		{} \
+	//struct tss_struct tss;
+/*tss*/	{0,                     --long	back_link;	/* 16 high bits zero */
+     PAGE_SIZE+(long)&init_task,--long	esp0;
+	 0x10,0,0,0,0,--long	ss0;/* 16 high bits zero */ long	esp1; long	ss1;/* 16 high bits zero */  long	esp2; long	ss2;/* 16 high bits zero */
+	 (long)&pg_dir,\--long	cr3;
+	 0,0,0,0,0,0,0,0, \--long	eip; long	eflags; long	eax,ecx,edx,ebx; long	esp; long	ebp;
+	 0,0,0x17,0x17, --long	esi;long	edi;long	es;		/* 16 high bits zero */ long	cs;		/* 16 high bits zero */
+	 0x17,0x17,0x17,0x17, \--long	ss;	/* 16 high bits zero */ long	ds;	/* 16 high bits zero */ long	fs;	/* 16 high bits zero */  long	gs;	/* 16 high bits zero */
+	 _LDT(0),0x80000000, \--long	ldt;		/* 16 high bits zero */ --long	trace_bitmap;	/* bits: trace 0, bitmap 16-31 */
+		{} \ --struct i387_struct i387;
 	}, \
 }
+	
+
+typedef struct desc_struct {
+	unsigned long a,b;
+} desc_table[256];
 
 extern struct task_struct *task[NR_TASKS];
 extern struct task_struct *last_task_used_math;
@@ -184,16 +205,16 @@ __asm__("cmpl %%ecx,_current\n\t" \
 }
 
 #define PAGE_ALIGN(n) (((n)+0xfff)&0xfffff000)
-
-#define _set_base(addr,base) \
-__asm__("movw %%dx,%0\n\t" \
-	"rorl $16,%%edx\n\t" \
-	"movb %%dl,%1\n\t" \
-	"movb %%dh,%2" \
-	::"m" (*((addr)+2)), \
-	  "m" (*((addr)+4)), \
-	  "m" (*((addr)+7)), \
-	  "d" (base) \
+// p->ldt[1],new_code_base {7654,3210}
+#define _set_base(addr=p->ldt[1],base=new_code_base=0x4000000) \
+__asm__("movw %%dx,%0\n\t" \ // 0x400 0000 的低16位赋值给  (*((addr)+2)) = 00000000 00000000
+	"rorl $16,%%edx\n\t" \ edx = 00000000 00000000 00000100 00000000
+	"movb %%dl,%1\n\t" \ dl = 00000000 = (*((addr)+4))
+	"movb %%dh,%2" \  dh =  00000100 = (*((addr)+7))
+	::"m" (*((addr)+2)), \ // 0%
+	  "m" (*((addr)+4)), \ // 1%
+	  "m" (*((addr)+7)), \ // 2%
+	  "d" (base) \ // edx
 	:"dx")
 
 #define _set_limit(addr,limit) \
@@ -211,23 +232,39 @@ __asm__("movw %%dx,%0\n\t" \
 #define set_base(ldt,base) _set_base( ((char *)&(ldt)) , base )
 #define set_limit(ldt,limit) _set_limit( ((char *)&(ldt)) , (limit-1)>>12 )
 
-#define _get_base(addr) ({\
-unsigned long __base; \
-__asm__("movb %3,%%dh\n\t" \
-	"movb %2,%%dl\n\t" \
-	"shll $16,%%edx\n\t" \
-	"movw %1,%%dx" \
-	:"=d" (__base) \
-	:"m" (*((addr)+2)), \
-	 "m" (*((addr)+4)), \
-	 "m" (*((addr)+7))); \
-__base;})
+ //struct desc_struct ldt[3];
+	{ \
+		{0,0}, \
+/* ldt */	{0x9f,0xc0fa00}, \｛00000000-4 00000000-5 00000000-6 10011111-7，00000000-0 11000000-1 11111010-2 00000000-3｝
+		{0x9f,0xc0f200}, \
+	}, \
 
+ ｛ 00000000-0 11000000-1 11111010-2 00000000-3
+    00000000-4 00000000-5 00000000-6 10011111-7，｝
+
+#define _get_base(addr=current->ldt[1]-8字节) ({\
+unsigned long __base; \
+__asm__("movb %3,%%dh\n\t" \ dh= 00000000
+	"movb %2,%%dl\n\t" \ dl=00000000
+	"shll $16,%%edx\n\t" \ edx = 00000000 00000000 
+	"movw %1,%%dx" \ edx = 00000000 00000000 00000000 00000000
+	:"=d" (__base) \   // edx  0%
+	:"m" (*((addr)+2)), \ // %1
+	 "m" (*((addr)+4)), \ // %2
+	 "m" (*((addr)+7))); \ // %3
+	__base;// %4
+})
+0000000011000000 0000 1100 0000 0000
 #define get_base(ldt) _get_base( ((char *)&(ldt)) )
 
 #define get_limit(segment) ({ \
 unsigned long __limit; \
-__asm__("lsll %1,%0\n\tincl %0":"=r" (__limit):"r" (segment)); \
-__limit;})
+__asm__("lsll %1,%0\n\t //llsl 是Load Segment Limit缩写。从指定段描述符中取出分散的限长比特位
+						//，拼成完整的限长值放入制定寄存器中,所得的段限长是实际字节数减1
+ ncl %0"  // 限长加1
+:"=r" (__limit) 0%
+:"r" (segment)); \  1%
+__limit; 2%
+})
 
 #endif

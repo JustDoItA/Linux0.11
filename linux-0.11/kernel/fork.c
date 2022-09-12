@@ -40,20 +40,20 @@ int copy_mem(int nr,struct task_struct * p)
 {
 	unsigned long old_data_base,new_data_base,data_limit;
 	unsigned long old_code_base,new_code_base,code_limit;
-
-	code_limit=get_limit(0x0f);
-	data_limit=get_limit(0x17);
-	old_code_base = get_base(current->ldt[1]);
-	old_data_base = get_base(current->ldt[2]);
+	T1 = 0 表示描述符在GDT中 T=1 表示描述符在ldt中
+	code_limit=get_limit(0x0f);0000000000001（索引值-index） 1（表指示标志位T1-Table Index） 11（RPL特权级-RequestedPrivilegeLevel） LDT中具有RPL=3的段1，其索引字段值是1
+	data_limit=get_limit(0x17);0000000000010（索引值-index） 1（表指示标志位T1-Table Index） 11（RPL特权级-RequestedPrivilegeLevel） LDT中具有RPL=3的段1，其索引字段值是2
+	old_code_base = get_base(current->ldt[1]);0x00
+	old_data_base = get_base(current->ldt[2]);0x00
 	if (old_data_base != old_code_base)
 		panic("We don't support separate I&D");
 	if (data_limit < code_limit)
 		panic("Bad data_limit");
-	new_data_base = new_code_base = nr * 0x4000000;
-	p->start_code = new_code_base;
-	set_base(p->ldt[1],new_code_base);
+	new_data_base = new_code_base = nr * 0x4000000; //设置创建中的新进程在线性地址空间中的基地址等于（64M*其任务号）
+	p->start_code = new_code_base; // 并用改值设置新进程局部描述符表中段描述符中的基地址
+	set_base(p->ldt[1],new_code_base); // 设置新进程的页目录表项和页表项,即复制当前进程（父进程）的页目录表项和页表项。此时父子进程共享父进程的内存页面
 	set_base(p->ldt[2],new_data_base);
-	if (copy_page_tables(old_data_base,new_data_base,data_limit)) {
+	if (copy_page_tables(old_data_base,new_data_base,data_limit)) { //正常情况下 copy_page_tables返回0，否则表示出错，释放申请的表项
 		free_page_tables(new_data_base,data_limit);
 		return -ENOMEM;
 	}
@@ -65,6 +65,10 @@ int copy_mem(int nr,struct task_struct * p)
  * information (task[nr]) and sets up the necessary registers. It
  * also copies the data segment in it's entirety.
  */
+ //1.CPU执行中断指令压入用户栈地址ss和esp、标志寄存器eflags和返回地址cs和eip；
+ //2.83--88行中在刚进入system_call时压入栈的段寄存器ds、es、fs和edx、ecx、ebx
+ //3.第94行调用system_call时压入栈的返回地址（用参数none表示）
+ //212-216行在调用copy_process()之前压入栈的gs、esi、edi、ebp和eax（nr）值
 int copy_process(int nr,long ebp,long edi,long esi,long gs,long none,
 		long ebx,long ecx,long edx,
 		long fs,long es,long ds,

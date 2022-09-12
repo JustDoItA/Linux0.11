@@ -64,23 +64,89 @@ unsigned long get_free_page(void)
 {
 register unsigned long __res asm("ax");
 
-__asm__("std ; repne ; scasb\n\t"
-	"jne 1f\n\t"
-	"movb $1,1(%%edi)\n\t"
-	"sall $12,%%ecx\n\t"
-	"addl %2,%%ecx\n\t"
-	"movl %%ecx,%%edx\n\t"
-	"movl $1024,%%ecx\n\t"
-	"leal 4092(%%edx),%%edi\n\t"
-	"rep ; stosl\n\t"
-	"movl %%edx,%%eax\n"
-	"1:"
-	:"=a" (__res)
-	:"0" (0),"i" (LOW_MEM),"c" (PAGING_PAGES),
-	"D" (mem_map+PAGING_PAGES-1)
-	:"di","cx","dx");
-return __res;
+//原文链接：https://blog.csdn.net/linpeng12358/article/details/41017961
+__asm__("std ; repne ; scasb\n\t" //循环比较，找出mem_map[i]==0的页; std设置DF=1，所以scasb执行递减操作，
+                                  //涉及寄存器al, ecx, es:(e)di三个寄存器，在函数尾部的定义中
+								  //  即有
+										//al       = 0;    //如果mem_map[i] == 0,表示为空闲页，否则为已分配占用,al保存0值，用于比较
+										//ecx    = PAGING_PAGES; //主内存页表个数
+
+										//es:di =  (mem_map+PAGING_PAGES-1);   //内存管理数组最后一项
+										//这句指令的意思是从数组mem_map[0..(PAGING_PAGES-1)]的最后一项
+										//mem_map[PAGING_PAGES-1]开始，比较mem_map[i]是否等于0(0值保存在al寄存器中);
+										//每比较一次,es:di值减1,如果不相等,es:di值减1,即mem_map[i--],继续比较,直到ecx == 0;
+										//如果相等，则跳出循环
+
+	"jne 1f\n\t"  // 如果mem_map[0..(PAGING_PAGES-1)]均不等于0,跳转到标签1f处执行,Nf表示向前标签,Nb表示向后标签,N是取值1-10的十进制数字
+	"movb $1,1(%%edi)\n\t" 	 // mem_map[i]==0是mem_map[0..(PAGING_PAGES-1)]中逆序第一个找到的等于0的目标，
+						    //  将edi的最低位置1，即mem_map[i]=1,标志为该页已被占用，不是空闲位
+	"sall $12,%%ecx\n\t"  //  此时ecx保存的是mem_map[i]的下标i,即相对页面数,
+							// 举例:
+							// 假设mem_map[0..(PAGING_PAGES-1)]最后一个参数
+							// mem_map[PAGING_PAGES-1] == 0，即i == (PAGING_PAGES-1),
+							// 所以此时*ecx == PAGING_PAGES-1;
+							// 此时相对页面地址是4k*(PAGING_PAGES-1),
+							// 每一页1024个4字节物理页,左移12位等于4096(2的12次方),
+	"addl %2,%%ecx\n\t" // 加上低端内存地址，得到实际物理地址
+                       // %2等于LOW_MEM，在如下语句中定义
+                       //"0" (0),"i" (LOW_MEM),"c" (PAGING_PAGES),
+                       //提问：
+                       //为什么4k*(PAGING_PAGES-1)不是实际物理地址呢？
+                       //答案是初始化的时候如下:
+                       //mem_map[0..(PAGING_PAGES)]是主内存管理数组
+                       //管理的只是1-16M的空间，即PAGING_MEMORY = ((16-1)*1024*1024)
+                       //不包括0-1M(0-1M,其实是0-640K已经被内核占用)
+	"movl %%ecx,%%edx\n\t" //将ecx寄存器的值保存到edx寄存器中，即将实际物理地址保存到edx寄存器中。
+	"movl $1024,%%ecx\n\t" // 将1024保存到ecx寄存器中，因为每一页占用4096字节(4K),实际物理内存,每项占用4字节,有1024项。
+	"leal 4092(%%edx),%%edi\n\t" // 因为按照4字节对齐，所以每项占用4字节,
+                                 // 取当前物理页最后一项4096 = 4096-4 = 1023*4 = (1024-1)*4 。
+                                 // 将该物理页面的末端保存在edi寄存器中,
+                                 // 即ecx+4092处的地址保存在edi寄存器中。
+	"rep ; stosl\n\t" //从ecx+4092处开始，反方向，步进4，重复1024次，
+					  // 将该物理页1024项全部填入eax寄存器的值，
+					  // 在如下代码定义中，eax初始化为0(al=0,eax =0,ax =0)
+					  //  :"0" (0),"i" (LOW_MEM),"c" (PAGING_PAGES),
+					  //   所以该物理页1024项全部清零。
+	"movl %%edx,%%eax\n" // 将该物理页面起始地址放入eax寄存器中，
+					  // Intel的EABI规则中，
+					  //  eax寄存器用于保存函数返回值	
+	"1:"  //标签1，用于"jne 1f\n\t"语句跳转返回0值，
+			//注意：
+				//eax寄存器只在"movl %%edx,%%eax\n"中被赋值，
+				//eax寄存器初始值是'0'，如果跳转到标签"1:"处，
+				//返回值是0，表示没有空闲物理页。
+	:"=a" (__res) 0% eax //输出寄存器列表，这里只有一个，其中a表示eax寄存器
+	:"0" (0),     1% // "0"表示与上面同个位置的输出相同的寄存器，即"0"等于输出寄存器eax， 即eax既是输出寄存器，同时也是输入寄存器，
+					 //   当然，在时间颗粒度最小的情况下，eax不能同时作为输入或者输出寄存器， 只能作为输入或者输出寄存器;
+	 "i" (LOW_MEM), 2% //"i" (LOW_MEM)是%2，从输出寄存器到输入寄存器依次编号%0，%1，%2.....%N,
+						//其中"i"表示立即数，不是edi的代号，edi的代号是"D";
+	 "c" (PAGING_PAGES), 3%  ecx //表示将ecx寄存器存入PAGING_PAGES，ecx寄存器代号"c"。
+	 "D" (mem_map+PAGING_PAGES-1) 4% edi // "D"使用edi寄存器，即edi寄存器保存的值是(mem_map+PAGING_PAGES-1)即%%edi = &mem_map[PAGING_PAGES-1]。
+	:"di","cx","dx"); // 保留寄存器，告诉编译器"di","cx","dx"三个寄存器已经被分配， 在编译器编译中，不会将这三个寄存器分配为输入或者输出寄存器。
+return __res;   //返回__res保存的值，相当于汇编的ret，隐含将eax寄存器返回，C语言中是显式返回。
 }
+
+
+//(1)std:主要将ESI and/or EDI方向设置为递减，对应cld(用于方向设置为递增)DF -> 1;
+//(2)repne:
+//(3)scasb: GNU汇编
+    //在汇编语言中SCASB是一条字符串操作指令，源自“SCAN String Byte”的缩写。
+	计算 AL - byte of [ES:EDI] , 设置相应的标志寄存器的值；
+    修改寄存器EDI的值：如果标志DF为0，则 inc EDI；如果DF为1，则 dec EDI。
+    SCASB指令常与循环指令REPZ/REPNZ合用。例如，REPNZ SCASB 语句表示当 寄存器ECX>0 且 标志寄存器ZF=0，则再执行一次SCASB指令。
+    比较寄存器AL的值不相等则重复查找的字
+//(4)sall
+    如sall $12, %ecx.
+    这个指令是算法左移,相当于c语言中的左移操作符<<.
+    intel汇编指令中的SAL,(Shit Arithmetic left).
+    根据AT&T的语法规则，
+    因为是一个长型的操作(ecx),
+    所以在intel汇编指令sal上加一个"l",
+    即转换成sall。
+//(5)stosl
+    STOSL指令相当于将EAX中的值保存到ES:EDI指向的地址中，
+    若设置了EFLAGS中的方向位置位(即在STOSL指令前使用STD指令)
+    则EDI自减4，否则(使用CLD指令)EDI自增4。
 
 /*
  * Free a page of memory at physical address 'addr'. Used by
@@ -157,34 +223,38 @@ int copy_page_tables(unsigned long from,unsigned long to,long size)
 
 	if ((from&0x3fffff) || (to&0x3fffff))
 		panic("copy_page_tables called with wrong alignment");
-	from_dir = (unsigned long *) ((from>>20) & 0xffc); /* _pg_dir = 0 */
-	to_dir = (unsigned long *) ((to>>20) & 0xffc);
-	size = ((unsigned) (size+0x3fffff)) >> 22;
+	from_dir = (unsigned long *) ((from>>20) & 0xffc); /* _pg_dir = 0 */ // 这里面放着的是源的页目录表项的地址（线性地址）
+	to_dir = (unsigned long *) ((to>>20) & 0xffc); //64M>>20 = 64 64先是逻辑地址。当前代码段数据段基地址为0，所以线性地址为64，100 0000代表第0目录项指向的页表的第0页
+	size = ((unsigned) (size+0x3fffff)) >> 22;//size 兆单位
 	for( ; size-->0 ; from_dir++,to_dir++) {
 		if (1 & *to_dir)
 			panic("copy_page_tables: already exist");
 		if (!(1 & *from_dir))
 			continue;
-		from_page_table = (unsigned long *) (0xfffff000 & *from_dir);
-		if (!(to_page_table = (unsigned long *) get_free_page()))
+		from_page_table = (unsigned long *) (0xfffff000 & *from_dir); ff ff f0 00 //取源目录项中页表地址
+		if (!(to_page_table = (unsigned long *) get_free_page())) // 为了保存目的目录项对应的页表，需要在主内存中申请1页空闲内存页。
+																  // 返回新申请的一个页的基址，虽然返回的线性地址，然而这个线性地址刚好也就会等于这个页的物理地址
 			return -1;	/* Out of memory, see freeing */
-		*to_dir = ((unsigned long) to_page_table) | 7;
-		nr = (from==0)?0xA0:1024;
+		*to_dir = ((unsigned long) to_page_table) | 7; // 这个过程就是让页目录表项的第16项指向这个新申请的页，把这个新申请的页当作页表来使用，
+													   // 同时在这个页目录表里面是这个页表为存在、可读写
+		nr = (from==0)?0xA0:1024; //针对当前处理的药物目录项对应的页表，设置需要复制的页面项数。如果是内核空间，则紧需要复制头160页对应的页表项
+								  // 否则需要复制一个页表中所有1024页页表项，可映射4MB物理内存
+		// 此时对于当前页表，开始循环复制制定的nr个内存页面表项
 		for ( ; nr-- > 0 ; from_page_table++,to_page_table++) {
-			this_page = *from_page_table;
-			if (!(1 & this_page))
+			this_page = *from_page_table; //取出源页表项内容
+			if (!(1 & this_page)) // 如果当前源页面没有使用，则不用复制该表项，继续处理下一项
 				continue;
-			this_page &= ~2;
-			*to_page_table = this_page;
-			if (this_page > LOW_MEM) {
-				*from_page_table = this_page;
-				this_page -= LOW_MEM;
+			this_page &= ~2; // 复位页表项中R/W标志位（位1置0），即让页表项对应的页面只读。
+			*to_page_table = this_page; // 然后将该页表项复制到目的表中
+			if (this_page > LOW_MEM) { // 如果该页表项所指物理页面地址在1MB以上，则需要设置内存页面映射数组mem_map[]
+				*from_page_table = this_page;  // 另源页表只读
+				this_page -= LOW_MEM; // 计算页面号，并以它为索引在页面映射数组相应项中增加引用次数
 				this_page >>= 12;
 				mem_map[this_page]++;
 			}
 		}
 	}
-	invalidate();
+	invalidate(); // 刷新页变换高速缓存
 	return 0;
 }
 
@@ -395,19 +465,20 @@ void do_no_page(unsigned long error_code,unsigned long address)
 	free_page(page);
 	oom();
 }
-
+//start_mem 除去虚拟磁盘+物理低4M（内核+BIOS ROM+显存）的内容，占用的内存后剩下的内存起始地址（虚拟磁盘占用896项*1024=）
 void mem_init(long start_mem, long end_mem)
 {
 	int i;
 
-	HIGH_MEMORY = end_mem;
-	for (i=0 ; i<PAGING_PAGES ; i++)
-		mem_map[i] = USED;
-	i = MAP_NR(start_mem);
-	end_mem -= start_mem;
-	end_mem >>= 12;
-	while (end_mem-->0)
-		mem_map[i++]=0;
+	HIGH_MEMORY = end_mem; //end_mem 内核占用的低1M的内容+从BIOS获取的扩展内存，最大16M
+	for (i=0 ; i<PAGING_PAGES ; i++) //扩展内存 PAGING_MEMORY (15*1024*1024)>>12（每页4k大小） = 3840页
+		mem_map[i] = USED; // 扩展内存中的15M，mem_map赋初始值USED(100)
+	i = MAP_NR(start_mem); // #define MAP_NR(addr) (((addr)-LOW_MEM)>>12) = 896页
+	end_mem -= start_mem; //计算主内存区大小
+	end_mem >>= 12; //计算主内存区占用物理页
+	while (end_mem-->0) // 循环页面数-1次
+		mem_map[i++]=0; // mem_map映射赋0，mem_map中每个位置映射为物理的对应页，例如最后一个要素mem_map[3839]，对应3840页
+		                // mem_map[3839]值，对应改内存被使用了多少次，在每次分配内存（get_free_page）时，会将改值赋1
 }
 
 void calc_mem(void)

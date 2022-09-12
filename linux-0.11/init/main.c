@@ -114,7 +114,7 @@ void main(void)		/* This really IS void, no error here. */
 	if (memory_end > 16*1024*1024)
 		memory_end = 16*1024*1024;
 	if (memory_end > 12*1024*1024) 
-		buffer_memory_end = 4*1024*1024;
+		buffer_memory_end = 4*1024*1024; // 如果16M的物理内存的话，则buffer_memory_end（高速缓存的结束地址是4M）,期间640k-1M的内容为显存和BIOS ROM
 	else if (memory_end > 6*1024*1024)
 		buffer_memory_end = 2*1024*1024;
 	else

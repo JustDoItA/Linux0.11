@@ -111,7 +111,7 @@ setup_gdt:
  * using 4 of them to span 16 Mb of physical memory. People with
  * more than 16MB will have to expand this.
  */
-.org 0x1000
+.org 0x1000 # 从偏移0x1000处开始是第一个页表（偏移0开始处将存放页表目录）
 pg0:
 
 .org 0x2000
@@ -123,7 +123,7 @@ pg2:
 .org 0x4000
 pg3:
 
-.org 0x5000
+.org 0x5000 # 定义下面的内存数据块从偏移0x5000处开始
 /*
  * tmp_floppy_area is used by the floppy-driver when DMA cannot
  * reach to a buffer-block. It needs to be aligned, so that it isn't
