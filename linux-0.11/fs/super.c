@@ -254,22 +254,22 @@ void mount_root(void)
 		wait_for_keypress();
 	}
 	for(p = &super_block[0] ; p < &super_block[NR_SUPER] ; p++) {
-		p->s_dev = 0;
-		p->s_lock = 0;
-		p->s_wait = NULL;
+		p->s_dev = 0; // 超级块所在的设备号
+		p->s_lock = 0; // 被锁定标志
+		p->s_wait = NULL; // 等待该超级块的进程
 	}
-	if (!(p=read_super(ROOT_DEV)))
+	if (!(p=read_super(ROOT_DEV))) // 从根设备上读取文件系统的超级块
 		panic("Unable to mount root");
-	if (!(mi=iget(ROOT_DEV,ROOT_INO)))
+	if (!(mi=iget(ROOT_DEV,ROOT_INO))) // 从根设备上取得文件系统的根i节点（1号节点）在内存i节点表中的指针
 		panic("Unable to read root i-node");
-	mi->i_count += 3 ;	/* NOTE! it is logically used 4 times, not 1 */
+	mi->i_count += 3 ;	/* NOTE! it is logically used 4 times, not 1 */ //i节点引用次数+3 p->s_isup = p->s_imount = mi（被引用2次）；iget()已经设置为1
 	p->s_isup = p->s_imount = mi;
-	current->pwd = mi;
-	current->root = mi;
+	current->pwd = mi; // 当前进程当前工作目录
+	current->root = mi; //根目录i节点
 	free=0;
-	i=p->s_nzones;
-	while (-- i >= 0)
-		if (!set_bit(i&8191,p->s_zmap[i>>13]->b_data))
+	i=p->s_nzones; // 超级块中表明的设备逻辑块数
+	while (-- i >= 0) // 根据逻辑块位图中响应比特位的占用情况统计出空闲块数
+		if (!set_bit(i&8191,p->s_zmap[i>>13]->b_data)) //set_bit只是测试比特位，i&8191用于取得i节点号在当前位图块中对应的比特位偏移值，i>>13是将i除以8192，也即除以一个磁盘快包含的比特位数
 			free++;
 	printk("%d/%d free blocks\n\r",free,p->s_nzones);
 	free=0;

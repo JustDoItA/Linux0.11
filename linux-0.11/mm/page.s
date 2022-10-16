@@ -23,8 +23,8 @@ _page_fault:
 	mov %dx,%es
 	mov %dx,%fs
 	movl %cr2,%edx
-	pushl %edx
-	pushl %eax
+	pushl %edx // 引起中断的线性地址
+	pushl %eax // 错误码
 	testl $1,%eax
 	jne 1f
 	call _do_no_page

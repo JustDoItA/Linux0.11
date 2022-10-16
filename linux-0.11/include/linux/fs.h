@@ -43,7 +43,7 @@ void buffer_init(long buffer_end);
 #define NR_OPEN 20
 #define NR_INODE 32
 #define NR_FILE 64
-#define NR_SUPER 8
+#define NR_SUPER 8 // 系统所含超级块个数
 #define NR_HASH 307
 #define NR_BUFFERS nr_buffers
 #define BLOCK_SIZE 1024
@@ -122,25 +122,25 @@ struct file {
 };
 
 struct super_block {
-	unsigned short s_ninodes;
-	unsigned short s_nzones;
-	unsigned short s_imap_blocks;
-	unsigned short s_zmap_blocks;
-	unsigned short s_firstdatazone;
-	unsigned short s_log_zone_size;
-	unsigned long s_max_size;
-	unsigned short s_magic;
+	unsigned short s_ninodes; // 节点数
+	unsigned short s_nzones; // 逻辑块数
+	unsigned short s_imap_blocks; // i节点位图所占用的数据块数
+	unsigned short s_zmap_blocks; // 逻辑块位图所占用的数据块数
+	unsigned short s_firstdatazone; // 第一个数据逻辑块号
+	unsigned short s_log_zone_size; // log(数据块/逻辑块)，以2为低
+	unsigned long s_max_size; // 文件最大长度
+	unsigned short s_magic; // 文件系统魔数
 /* These are only in memory */
-	struct buffer_head * s_imap[8];
-	struct buffer_head * s_zmap[8];
-	unsigned short s_dev;
-	struct m_inode * s_isup;
-	struct m_inode * s_imount;
-	unsigned long s_time;
-	struct task_struct * s_wait;
-	unsigned char s_lock;
-	unsigned char s_rd_only;
-	unsigned char s_dirt;
+	struct buffer_head * s_imap[8];// i节点位图缓冲块指针数组（占用8块，可表示64M）
+	struct buffer_head * s_zmap[8];// 逻辑块位图缓冲块指针数组（占用8块）
+	unsigned short s_dev;// 超级块所在的设备号
+	struct m_inode * s_isup;//被安装的文件系统根目录的i节点
+	struct m_inode * s_imount;// 被安装到的i节点
+	unsigned long s_time;// 修改时间
+	struct task_struct * s_wait;// 等待该超级块的进程
+	unsigned char s_lock;//被锁定标志
+	unsigned char s_rd_only;//只读标志
+	unsigned char s_dirt;// 已修改（脏）标志
 };
 
 struct d_super_block {

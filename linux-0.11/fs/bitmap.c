@@ -15,12 +15,18 @@ __asm__("cld\n\t" \
 	"rep\n\t" \
 	"stosl" \
 	::"a" (0),"c" (BLOCK_SIZE/4),"D" ((long) (addr)):"cx","di")
-
+//set_bit(i&8191,p->s_zmap[i>>13]->b_data)
 #define set_bit(nr,addr) ({\
 register int res __asm__("ax"); \
-__asm__ __volatile__("btsl %2,%3\n\tsetb %%al": \
-"=a" (res):"0" (0),"r" (nr),"m" (*(addr))); \
-res;})
+				 __asm__ __volatile__(
+									"btsl %2,%3\n\t // btsl指令用于测试并设置比特位，（把addr的第nr位拷贝到CF标志上，然后再把addr的第nr位置1）
+												   // 把基地址（%3）和比特偏移值（2%）所指定的比特位值先保持到进位标志CF中，然后设置该比特位为1
+									setb %%al": \ // 根据进位标志位CF设置操作数（%al），如果CF=1 则%al=1否则%al=0
+									"=a" (res):%0=eax
+									"0" (0), 1%=eax=0
+									"r" (nr), 2% = nr
+									"m" (*(addr))); %3= addr内容
+						\res;})
 
 #define clear_bit(nr,addr) ({\
 register int res __asm__("ax"); \
